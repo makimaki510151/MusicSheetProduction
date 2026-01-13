@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="ja">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -30,7 +31,7 @@
             background: rgba(255, 255, 255, 0.95);
             padding: 20px;
             overflow-y: auto;
-            box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+            box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
             user-select: text;
             -webkit-user-select: text;
         }
@@ -116,7 +117,8 @@
             transform: translateY(-2px);
         }
 
-        .note-type-selector, .snap-selector {
+        .note-type-selector,
+        .snap-selector {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
             gap: 6px;
@@ -124,7 +126,8 @@
             -webkit-user-select: none;
         }
 
-        .note-type-btn, .snap-btn {
+        .note-type-btn,
+        .snap-btn {
             padding: 8px 4px;
             border: 2px solid #667eea;
             background: white;
@@ -136,7 +139,8 @@
             transition: all 0.3s;
         }
 
-        .note-type-btn.active, .snap-btn.active {
+        .note-type-btn.active,
+        .snap-btn.active {
             background: #667eea;
             color: white;
         }
@@ -172,7 +176,7 @@
             padding: 15px;
             border-radius: 10px;
             margin-bottom: 15px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
         }
 
         .controls-row {
@@ -236,7 +240,7 @@
             border: 2px solid white;
             border-radius: 50%;
             cursor: grab;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
             transition: transform 0.1s;
         }
 
@@ -272,7 +276,7 @@
             border-radius: 10px;
             overflow: hidden;
             position: relative;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
             display: flex;
         }
 
@@ -385,7 +389,7 @@
             right: 0;
             height: 2px;
             background: white;
-            box-shadow: 0 0 4px rgba(0,0,0,0.5);
+            box-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
             z-index: 10;
         }
 
@@ -397,15 +401,17 @@
             background: linear-gradient(135deg, #667eea, #764ba2);
             box-shadow: 0 2px 8px rgba(102, 126, 234, 0.6);
             border-radius: 4px;
-            
+
             /* ▼ 追加: 親クラス(.note)の left: 15% をリセット */
             left: 0;
         }
 
         .note.tap::before {
             transform: rotate(-45deg);
-            width: 142%; /* 斜めの長さに合わせて幅を広げる */
-            left: -21%;  /* 広げた分、中心を合わせる */
+            width: 142%;
+            /* 斜めの長さに合わせて幅を広げる */
+            left: -21%;
+            /* 広げた分、中心を合わせる */
         }
 
         .note.hold {
@@ -479,11 +485,12 @@
         }
     </style>
 </head>
+
 <body>
     <div class="container">
         <div class="sidebar">
             <h2>📝 譜面エディタ</h2>
-            
+
             <div class="section">
                 <h3>🎵 楽曲設定</h3>
                 <div class="input-group">
@@ -492,20 +499,21 @@
                     <input type="file" id="audioFile" accept="audio/*">
                     <div class="file-name" id="fileName"></div>
                 </div>
-                
+
                 <div class="input-group">
                     <label for="title">曲名</label>
                     <input type="text" id="title" placeholder="楽曲タイトル">
                 </div>
-                
+
                 <div class="input-group">
                     <label for="bpm">BPM</label>
                     <input type="number" id="bpm" value="120" min="60" max="300">
                 </div>
-                
+
                 <div class="input-group">
                     <label for="timeSignature">拍子</label>
-                    <select id="timeSignature" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">
+                    <select id="timeSignature"
+                        style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">
                         <option value="4/4">4/4 (四分の四拍子)</option>
                         <option value="3/4">3/4 (四分の三拍子)</option>
                         <option value="5/4">5/4 (四分の五拍子)</option>
@@ -515,7 +523,7 @@
                         <option value="7/4">7/4 (四分の七拍子)</option>
                     </select>
                 </div>
-                
+
                 <div class="input-group">
                     <label for="offset">オフセット (ms)</label>
                     <input type="number" id="offset" value="0" step="10">
@@ -531,7 +539,7 @@
                         <button class="note-type-btn" data-type="hold">ホールド</button>
                     </div>
                 </div>
-                
+
                 <div class="input-group">
                     <label>スナップ</label>
                     <div class="snap-selector">
@@ -673,7 +681,7 @@
             drawGridLines();
             drawMeasureLabels();
             updateTimeDisplay();
-            
+
             // エディタを最下部にスクロール
             setTimeout(() => {
                 editor.scrollTop = editor.scrollHeight;
@@ -820,7 +828,7 @@
 
             function handleLaneClick(e) {
                 if (e.target.closest('.note')) return;
-                
+
                 const lane = parseInt(e.currentTarget.dataset.lane);
                 const rect = lanes.getBoundingClientRect();
                 const y = rect.bottom - e.clientY;
@@ -836,11 +844,11 @@
                         const duration = Math.abs(time - holdStartNote.time);
                         if (duration > 0 && holdStartNote.lane === lane) {
                             const startTime = Math.min(time, holdStartNote.time);
-                            addNote({ 
-                                time: startTime, 
-                                lane: holdStartNote.lane, 
-                                type: 'hold', 
-                                duration 
+                            addNote({
+                                time: startTime,
+                                lane: holdStartNote.lane,
+                                type: 'hold',
+                                duration
                             });
                         }
                         holdStartNote = null;
@@ -880,7 +888,7 @@
                         selectedNotes.add(index);
                     }
                     renderNotes();
-                    
+
                     const note = notes[index];
                     audio.currentTime = (note.time - offset) / 1000;
                     return;
@@ -994,21 +1002,21 @@
 
         function copySelectedNotes() {
             if (selectedNotes.size === 0) return;
-            
+
             copiedNotes = Array.from(selectedNotes)
                 .map(index => ({ ...notes[index] }))
                 .sort((a, b) => a.time - b.time);
-            
+
             console.log(`${copiedNotes.length}個のノーツをコピーしました`);
         }
 
         function pasteNotes() {
             if (copiedNotes.length === 0) return;
-            
+
             const currentTime = (audio.currentTime || 0) * 1000 + offset;
             const minTime = Math.min(...copiedNotes.map(n => n.time));
             const timeOffset = currentTime - minTime;
-            
+
             selectedNotes.clear();
             copiedNotes.forEach(note => {
                 const newNote = {
@@ -1018,7 +1026,7 @@
                 notes.push(newNote);
                 selectedNotes.add(notes.length - 1);
             });
-            
+
             renderNotes();
             updateNoteCount();
             console.log(`${copiedNotes.length}個のノーツを貼り付けました`);
@@ -1032,7 +1040,7 @@
 
         function deleteSelectedNotes() {
             if (selectedNotes.size === 0) return;
-            
+
             const indices = Array.from(selectedNotes).sort((a, b) => b - a);
             indices.forEach(index => notes.splice(index, 1));
             selectedNotes.clear();
@@ -1096,11 +1104,11 @@
             const measureDuration = beatDuration * (numerator / (denominator / 4));
             const baseMeasureHeight = 200;
             const measureHeight = baseMeasureHeight * (scrollSpeed / 100);
-            
+
             const duration = (audio.duration || 60) * 1000;
             const numMeasures = Math.ceil(duration / measureDuration) + 10;
             const totalHeight = numMeasures * measureHeight;
-            
+
             editorContent.style.height = totalHeight + 'px';
             measureContent.style.height = totalHeight + 'px';
             lanes.style.height = totalHeight + 'px';
@@ -1114,15 +1122,24 @@
             const measureDuration = beatDuration * (numerator / (denominator / 4));
             const baseMeasureHeight = 200;
             const measureHeight = baseMeasureHeight * (scrollSpeed / 100);
-            const divisions = currentSnap;
+
+            // ▼▼▼ 修正箇所 ▼▼▼
+            // 拍子に合わせて1小節内のグリッド数を計算
+            const divisions = Math.round(numerator * (currentSnap / denominator));
+            // ▲▲▲ 修正箇所 ▲▲▲
+
             const lineHeight = measureHeight / divisions;
 
             const numMeasures = Math.ceil(editorContent.offsetHeight / measureHeight);
 
             for (let measure = 0; measure < numMeasures; measure++) {
+                // divisions が 0 になる（極端な設定）のを防ぐ
+                if (divisions <= 0) continue;
+
                 for (let division = 0; division < divisions; division++) {
                     const y = measure * measureHeight + division * lineHeight;
                     const line = document.createElement('div');
+                    // 0番目（小節の頭）だけ濃い線にする
                     line.className = 'grid-line' + (division === 0 ? ' measure' : '');
                     line.style.bottom = y + 'px';
                     editorContent.appendChild(line);
@@ -1167,23 +1184,23 @@
             const baseMeasureHeight = 200;
             const measureHeight = baseMeasureHeight * (scrollSpeed / 100);
             const time = (y / measureHeight) * measureDuration;
-            
+
             const snapDuration = beatDuration / (currentSnap / 4);
             return Math.round(time / snapDuration) * snapDuration;
         }
 
         function addNote(note) {
             // 重複チェック：同じ時間・同じレーンにノーツが既に存在しないか確認
-            const isDuplicate = notes.some(existingNote => 
-                existingNote.time === note.time && 
+            const isDuplicate = notes.some(existingNote =>
+                existingNote.time === note.time &&
                 existingNote.lane === note.lane
             );
-            
+
             if (isDuplicate) {
                 console.log('同じ位置にノーツが既に存在します');
                 return;
             }
-            
+
             notes.push(note);
             renderNotes();
             updateNoteCount();
@@ -1258,30 +1275,30 @@
             reader.onload = (event) => {
                 try {
                     const data = JSON.parse(event.target.result);
-                    
+
                     document.getElementById('title').value = data.metadata.title || '';
                     document.getElementById('bpm').value = data.metadata.bpm || 120;
                     document.getElementById('offset').value = data.metadata.offset || 0;
-                    
+
                     bpm = data.metadata.bpm || 120;
                     offset = data.metadata.offset || 0;
                     timeSignature = data.metadata.timeSignature || '4/4';
                     notes = data.notes || [];
                     selectedNotes.clear();
-                    
+
                     document.getElementById('timeSignature').value = timeSignature;
-                    
+
                     updateContentHeight();
                     drawGridLines();
                     drawMeasureLabels();
                     renderNotes();
                     updateNoteCount();
-                    
+
                     setTimeout(() => {
                         editor.scrollTop = editor.scrollHeight;
                         measureDisplay.scrollTop = measureDisplay.scrollHeight;
                     }, 100);
-                    
+
                     alert('譜面データを読み込みました！');
                 } catch (error) {
                     alert('JSONファイルの読み込みに失敗しました。');
@@ -1293,4 +1310,5 @@
         init();
     </script>
 </body>
+
 </html>
