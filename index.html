@@ -309,6 +309,7 @@
             overflow-x: hidden;
             position: relative;
             -webkit-overflow-scrolling: touch;
+            scroll-behavior: auto;
         }
 
         .editor::-webkit-scrollbar {
@@ -456,6 +457,7 @@
 
         .note.selected {
             box-shadow: 0 0 0 3px #ecc94b, 0 4px 12px rgba(102, 126, 234, 0.8);
+            filter: brightness(1.2);
         }
 
         .note:hover {
@@ -481,6 +483,12 @@
             background: rgba(236, 201, 75, 0.1);
             pointer-events: none;
             z-index: 1000;
+        }
+
+        .note.paste-preview {
+            opacity: 0.4;
+            pointer-events: none;
+            outline: 2px dashed #fff;
         }
 
         input[type="file"] {
@@ -525,6 +533,18 @@
                     <label class="file-label" for="audioFile">ファイルを選択</label>
                     <input type="file" id="audioFile" accept="audio/*">
                     <div class="file-name" id="fileName"></div>
+                </div>
+
+                <div class="input-group">
+                    <label for="audioVolume">楽曲音量</label>
+                    <input type="range" id="audioVolume" min="0" max="100" value="50" step="1">
+                    <span id="audioVolumeValue">50%</span>
+                </div>
+
+                <div class="input-group">
+                    <label for="seVolume">クリック音量</label>
+                    <input type="range" id="seVolume" min="0" max="100" value="30" step="1">
+                    <span id="seVolumeValue">30%</span>
                 </div>
 
                 <div class="input-group">
@@ -615,9 +635,12 @@
                 <h3>⌨️ ショートカット</h3>
                 <div style="font-size: 12px; color: #555; line-height: 1.6;">
                     <strong>Space:</strong> 再生/停止<br>
+                    <strong>Ctrl+Z:</strong> 元に戻す<br>
                     <strong>Ctrl+C (⌘+C):</strong> コピー<br>
                     <strong>Ctrl+V (⌘+V):</strong> 貼り付け<br>
                     <strong>Ctrl+A (⌘+A):</strong> 全選択<br>
+                    <strong>Shift+Drag:</strong> 範囲選択<br>
+                    <strong>Esc:</strong> 選択・コピー解除<br>
                     <strong>Delete/Backspace:</strong> 削除<br>
                     <strong>配置:</strong> ドラッグ(Hold) / クリック(Tap)<br>
                     <strong>移動:</strong> 配置済みノーツをドラッグ<br>
@@ -690,12 +713,16 @@
         let isDraggingSelection = false;
         let selectionStart = null;
         let copiedNotes = [];
-        
-        // 操作フラグ
+        let seVolume = 0.3;
+        let currentPasteTime = 0; // 貼り付け予想位置保存用
+
+        let history = [];
+        const MAX_HISTORY = 50;
+
         let isPlacingHold = false;
         let holdInitialTime = 0;
         let currentPlacingHold = null;
-        
+
         let isResizingHoldTop = false;
         let isResizingHoldBottom = false;
         let isDraggingNote = false;
@@ -718,6 +745,21 @@
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         let playedNoteIndices = new Set();
 
+        function saveHistory() {
+            history.push(JSON.stringify(notes));
+            if (history.length > MAX_HISTORY) history.shift();
+        }
+
+        function undo() {
+            if (history.length > 0) {
+                const lastState = history.pop();
+                notes = JSON.parse(lastState);
+                selectedNotes.clear();
+                renderNotes();
+                updateNoteCount();
+            }
+        }
+
         function playTapSound() {
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
@@ -725,7 +767,7 @@
             gain.connect(audioCtx.destination);
             osc.type = 'sine';
             osc.frequency.setValueAtTime(880, audioCtx.currentTime);
-            gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            gain.gain.setValueAtTime(seVolume, audioCtx.currentTime);
             gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
             osc.start();
             osc.stop(audioCtx.currentTime + 0.1);
@@ -755,6 +797,18 @@
                         drawMeasureLabels();
                     }, { once: true });
                 }
+            });
+
+            document.getElementById('audioVolume').addEventListener('input', (e) => {
+                const vol = e.target.value;
+                audio.volume = vol / 100;
+                document.getElementById('audioVolumeValue').textContent = vol + '%';
+            });
+
+            document.getElementById('seVolume').addEventListener('input', (e) => {
+                const vol = e.target.value;
+                seVolume = (vol / 100) * 0.5;
+                document.getElementById('seVolumeValue').textContent = vol + '%';
             });
 
             playBtn.addEventListener('click', togglePlay);
@@ -880,7 +934,7 @@
                     updateTimeDisplay();
                     updateJudgmentLine();
                     checkNotesForSound();
-                    if (autoScroll && isPlaying && Date.now() - lastUserScrollTime > 2000) {
+                    if (autoScroll && isPlaying && Date.now() - lastUserScrollTime > 1500) {
                         updateEditorScroll();
                     }
                 }
@@ -903,6 +957,7 @@
             if (e.button === 2) {
                 const noteEl = e.target.closest('.note');
                 if (noteEl) {
+                    saveHistory();
                     const index = parseInt(noteEl.dataset.index);
                     notes.splice(index, 1);
                     selectedNotes.delete(index);
@@ -917,10 +972,22 @@
             const y = rect.bottom - e.clientY;
             const time = yToTime(y);
 
-            // 既存ノーツの操作判定
             const noteEl = e.target.closest('.note');
             if (noteEl) {
                 const index = parseInt(noteEl.dataset.index);
+                if (e.shiftKey) {
+                    if (selectedNotes.has(index)) selectedNotes.delete(index);
+                    else selectedNotes.add(index);
+                    renderNotes();
+                    return;
+                }
+
+                if (!selectedNotes.has(index)) {
+                    selectedNotes.clear();
+                    selectedNotes.add(index);
+                }
+
+                saveHistory();
                 if (e.target.classList.contains('hold-handle-top')) {
                     isResizingHoldTop = true;
                     dragNoteIndex = index;
@@ -932,17 +999,29 @@
                     dragNoteIndex = index;
                     dragOffsetTime = time - notes[index].time;
                 }
+                renderNotes();
                 return;
             }
+
+            if (e.shiftKey) {
+                isDraggingSelection = true;
+                selectionStart = { x: e.clientX, y: e.clientY, scroll: editor.scrollTop };
+                return;
+            }
+
+            selectedNotes.clear();
+            renderNotes();
 
             if (isTimeInHold(time, laneIdx)) return;
 
             if (currentNoteType === 'hold') {
+                saveHistory();
                 isPlacingHold = true;
                 holdInitialTime = time;
                 currentPlacingHold = { time: time, lane: laneIdx, type: 'hold', duration: 0 };
                 renderNotes();
             } else {
+                saveHistory();
                 addNote({ time, lane: laneIdx, type: currentNoteType });
             }
         }
@@ -959,21 +1038,40 @@
                 currentPlacingHold.duration = endTime - startTime;
                 renderNotes();
             } else if (isDraggingNote && dragNoteIndex !== -1) {
-                notes[dragNoteIndex].time = time - dragOffsetTime;
+                const note = notes[dragNoteIndex];
+                const newTime = time - dragOffsetTime;
+                const diff = newTime - note.time;
+                
+                if (selectedNotes.has(dragNoteIndex)) {
+                    selectedNotes.forEach(idx => {
+                        notes[idx].time += diff;
+                    });
+                } else {
+                    note.time = newTime;
+                }
                 renderNotes();
             } else if (isResizingHoldTop && dragNoteIndex !== -1) {
                 const note = notes[dragNoteIndex];
-                const newEndTime = time;
-                note.duration = Math.max(0, newEndTime - note.time);
+                note.duration = Math.max(0, time - note.time);
                 renderNotes();
             } else if (isResizingHoldBottom && dragNoteIndex !== -1) {
                 const note = notes[dragNoteIndex];
-                const oldEndTime = note.time + note.duration;
+                const oldEnd = note.time + note.duration;
                 note.time = time;
-                note.duration = Math.max(0, oldEndTime - time);
+                note.duration = Math.max(0, oldEnd - time);
                 renderNotes();
             } else if (isDraggingSelection && selectionStart) {
                 updateSelectionBox(e);
+            }
+            
+            // 貼り付けプレビューの計算
+            if (copiedNotes.length > 0 && !isDraggingSelection && !isPlaying) {
+                const rectEditor = editorContent.getBoundingClientRect();
+                const mouseY = rectEditor.bottom - e.clientY + editor.scrollTop;
+                const mouseTime = yToTime(mouseY);
+                const baseSnap = (60 / bpm) * 1000 / (currentSnap / 4);
+                currentPasteTime = Math.round(mouseTime / baseSnap) * baseSnap;
+                renderPastePreview(currentPasteTime);
             }
         }
 
@@ -997,13 +1095,62 @@
             updateNoteCount();
         }
 
-        function handleGlobalMouseDown(e) {
-            if (e.shiftKey && e.target.closest('.lane')) {
-                isDraggingSelection = true;
-                selectionStart = { x: e.clientX, y: e.clientY };
+        function updateSelectionBox(e) {
+            let box = document.getElementById('selectionBox');
+            if (!box) {
+                box = document.createElement('div');
+                box.id = 'selectionBox';
+                box.className = 'selection-box';
+                editorContent.appendChild(box);
+            }
+            const r = editorContent.getBoundingClientRect();
+            const x1 = Math.min(selectionStart.x, e.clientX) - r.left;
+            const y1 = Math.min(selectionStart.y - (selectionStart.scroll - editor.scrollTop), e.clientY) - r.top + editor.scrollTop;
+            const x2 = Math.max(selectionStart.x, e.clientX) - r.left;
+            const y2 = Math.max(selectionStart.y - (selectionStart.scroll - editor.scrollTop), e.clientY) - r.top + editor.scrollTop;
+
+            box.style.left = x1 + 'px';
+            box.style.top = y1 + 'px';
+            box.style.width = (x2 - x1) + 'px';
+            box.style.height = (y2 - y1) + 'px';
+        }
+
+        function finishSelection() {
+            const box = document.getElementById('selectionBox');
+            if (box) {
+                const r = editorContent.getBoundingClientRect();
+                const boxTop = parseFloat(box.style.top);
+                const boxBottom = boxTop + parseFloat(box.style.height);
+                const boxLeft = parseFloat(box.style.left);
+                const boxRight = boxLeft + parseFloat(box.style.width);
+
+                selectedNotes.clear();
+                notes.forEach((note, index) => {
+                    const noteY = editorContent.offsetHeight - timeToY(note.time);
+                    const actualX = 500 / 5 * note.lane + (editorContent.offsetWidth - 500) / 2;
+
+                    if (actualX >= boxLeft && actualX <= boxRight &&
+                        noteY <= boxBottom && noteY >= boxTop) {
+                        selectedNotes.add(index);
+                    }
+                });
+                box.remove();
             }
         }
-        document.addEventListener('mousedown', handleGlobalMouseDown);
+
+        function renderPastePreview(cursorTime) {
+            document.querySelectorAll('.paste-preview').forEach(el => el.remove());
+            if (copiedNotes.length === 0) return;
+            
+            const minTime = Math.min(...copiedNotes.map(n => n.time));
+            
+            copiedNotes.forEach(note => {
+                const previewNote = { ...note, time: note.time + (cursorTime - minTime) };
+                const el = createNoteElement(previewNote, null);
+                el.classList.add('paste-preview');
+                document.querySelector(`.lane[data-lane="${previewNote.lane}"]`).appendChild(el);
+            });
+        }
 
         function checkNotesForSound() {
             if (!isPlaying) return;
@@ -1016,50 +1163,24 @@
             });
         }
 
-        function updateSelectionBox(e) {
-            let box = document.getElementById('selectionBox');
-            if (!box) {
-                box = document.createElement('div');
-                box.id = 'selectionBox';
-                box.className = 'selection-box';
-                editorContent.appendChild(box);
-            }
-            const x1 = Math.min(selectionStart.x, e.clientX);
-            const y1 = Math.min(selectionStart.y, e.clientY);
-            const x2 = Math.max(selectionStart.x, e.clientX);
-            const y2 = Math.max(selectionStart.y, e.clientY);
-            const r = editorContent.getBoundingClientRect();
-            box.style.left = (x1 - r.left) + 'px';
-            box.style.top = (y1 - r.top + editor.scrollTop) + 'px';
-            box.style.width = (x2 - x1) + 'px';
-            box.style.height = (y2 - y1) + 'px';
-        }
-
-        function finishSelection() {
-            const box = document.getElementById('selectionBox');
-            if (box) {
-                const boxRect = box.getBoundingClientRect();
-                const lanesRect = lanes.getBoundingClientRect();
-                notes.forEach((note, index) => {
-                    const noteY = lanesRect.bottom - timeToY(note.time);
-                    const laneWidth = lanesRect.width / 5;
-                    const noteX = lanesRect.left + note.lane * laneWidth + laneWidth / 2;
-                    if (noteX >= boxRect.left && noteX <= boxRect.right &&
-                        noteY >= boxRect.top && noteY <= boxRect.bottom) {
-                        selectedNotes.add(index);
-                    }
-                });
-                box.remove();
-            }
-        }
-
         function handleKeyDown(e) {
             if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+            else if (e.code === 'Escape') { 
+                selectedNotes.clear(); 
+                copiedNotes = []; 
+                document.querySelectorAll('.paste-preview').forEach(el => el.remove());
+                renderNotes(); 
+            }
+            else if ((e.metaKey || e.ctrlKey) && e.code === 'KeyZ') { e.preventDefault(); undo(); }
             else if ((e.metaKey || e.ctrlKey) && e.code === 'KeyC') { e.preventDefault(); copySelectedNotes(); }
             else if ((e.metaKey || e.ctrlKey) && e.code === 'KeyV') { e.preventDefault(); pasteNotes(); }
             else if ((e.metaKey || e.ctrlKey) && e.code === 'KeyA') { e.preventDefault(); selectAllNotes(); }
             else if (e.code === 'Delete' || e.code === 'Backspace') {
-                if (document.activeElement.tagName !== 'INPUT') { e.preventDefault(); deleteSelectedNotes(); }
+                if (document.activeElement.tagName !== 'INPUT') { 
+                    e.preventDefault(); 
+                    saveHistory();
+                    deleteSelectedNotes(); 
+                }
             }
         }
 
@@ -1070,12 +1191,27 @@
 
         function pasteNotes() {
             if (copiedNotes.length === 0) return;
-            const currentTime = (audio.currentTime || 0) * 1000 + offset;
-            const minTime = Math.min(...copiedNotes.map(n => n.time));
-            copiedNotes.forEach(note => {
-                notes.push({ ...note, time: note.time + (currentTime - minTime) });
+            saveHistory();
+            
+            // プレビュー位置がある場合はそれを使用、なければ再生ヘッド位置を使用
+            let targetTime = currentPasteTime;
+            if (targetTime === 0) {
+                const currentTime = (audio.currentTime * 1000) + offset;
+                const baseSnap = (60 / bpm) * 1000 / (currentSnap / 4);
+                targetTime = Math.round(currentTime / baseSnap) * baseSnap;
+            }
+            
+            const minTimeInCopied = Math.min(...copiedNotes.map(n => n.time));
+            
+            selectedNotes.clear();
+            const newNotesStartIndex = notes.length;
+            copiedNotes.forEach((note, i) => {
+                const newNote = { ...note, time: note.time + (targetTime - minTimeInCopied) };
+                notes.push(newNote);
+                selectedNotes.add(newNotesStartIndex + i);
             });
             renderNotes();
+            updateNoteCount();
         }
 
         function selectAllNotes() {
@@ -1089,6 +1225,7 @@
             indices.forEach(i => notes.splice(i, 1));
             selectedNotes.clear();
             renderNotes();
+            updateNoteCount();
         }
 
         function togglePlay() {
@@ -1113,8 +1250,16 @@
         }
 
         function updateEditorScroll() {
-            const targetY = timeToY((audio.currentTime * 1000) + offset);
-            editor.scrollTop = editorContent.offsetHeight - targetY - (editor.clientHeight * 0.75);
+            const currentT = (audio.currentTime * 1000) + offset;
+            const targetY = timeToY(currentT);
+            
+            const viewHeight = editor.clientHeight;
+            // 判定線を画面の下から25%の位置に強力に固定
+            const linePositionFromBottom = viewHeight * 0.25;
+            const scrollPos = editorContent.offsetHeight - targetY - (viewHeight - linePositionFromBottom);
+            
+            // 補間を使わず直接代入することで最強の追従を実現
+            editor.scrollTop = scrollPos;
         }
 
         function updateJudgmentLine() {
@@ -1130,7 +1275,7 @@
             const { numerator, denominator } = getTimeSignatureInfo();
             const measureDuration = (60 / bpm) * 1000 * (numerator / (denominator / 4));
             const measureHeight = 200 * (scrollSpeed / 100);
-            const totalHeight = Math.ceil(((audio.duration || 60) * 1000) / measureDuration + 10) * measureHeight;
+            const totalHeight = Math.ceil(((audio.duration || 300) * 1000) / measureDuration + 10) * measureHeight;
             editorContent.style.height = totalHeight + 'px';
             measureContent.style.height = totalHeight + 'px';
             lanes.style.height = totalHeight + 'px';
@@ -1166,12 +1311,16 @@
 
         function timeToY(t) {
             const { numerator, denominator } = getTimeSignatureInfo();
-            return (t / ((60 / bpm) * 1000 * (numerator / (denominator / 4)))) * (200 * (scrollSpeed / 100));
+            const measureDuration = (60 / bpm) * 1000 * (numerator / (denominator / 4));
+            const measureHeight = 200 * (scrollSpeed / 100);
+            return (t / measureDuration) * measureHeight;
         }
 
         function yToTime(y) {
             const { numerator, denominator } = getTimeSignatureInfo();
-            const t = (y / (200 * (scrollSpeed / 100))) * ((60 / bpm) * 1000 * (numerator / (denominator / 4)));
+            const measureDuration = (60 / bpm) * 1000 * (numerator / (denominator / 4));
+            const measureHeight = 200 * (scrollSpeed / 100);
+            const t = (y / measureHeight) * measureDuration;
             const snap = (60 / bpm) * 1000 / (currentSnap / 4);
             return Math.round(t / snap) * snap;
         }
@@ -1188,7 +1337,7 @@
 
         function createNoteElement(note, index, isPlacing = false) {
             const el = document.createElement('div');
-            el.className = `note ${note.type} ${isPlacing ? 'placing' : ''} ${selectedNotes.has(index) ? 'selected' : ''}`;
+            el.className = `note ${note.type} ${isPlacing ? 'placing' : ''} ${index !== null && selectedNotes.has(index) ? 'selected' : ''}`;
             if (index !== null) el.dataset.index = index;
             const y = timeToY(note.time);
             if (note.type === 'hold') {
@@ -1201,10 +1350,14 @@
         }
 
         function renderNotes() {
-            document.querySelectorAll('.note').forEach(el => el.remove());
-            notes.forEach((n, i) => document.querySelector(`.lane[data-lane="${n.lane}"]`).appendChild(createNoteElement(n, i)));
+            document.querySelectorAll('.note:not(.paste-preview)').forEach(el => el.remove());
+            notes.forEach((n, i) => {
+                const laneEl = document.querySelector(`.lane[data-lane="${n.lane}"]`);
+                if (laneEl) laneEl.appendChild(createNoteElement(n, i));
+            });
             if (isPlacingHold && currentPlacingHold) {
-                document.querySelector(`.lane[data-lane="${currentPlacingHold.lane}"]`).appendChild(createNoteElement(currentPlacingHold, null, true));
+                const laneEl = document.querySelector(`.lane[data-lane="${currentPlacingHold.lane}"]`);
+                if (laneEl) laneEl.appendChild(createNoteElement(currentPlacingHold, null, true));
             }
         }
 
