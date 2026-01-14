@@ -341,7 +341,14 @@
             background: linear-gradient(90deg, #f56565, #ed8936, #ecc94b, #48bb78, #4299e1);
             z-index: 100;
             box-shadow: 0 0 20px rgba(245, 101, 101, 0.8);
-            pointer-events: none;
+            cursor: ns-resize;
+            pointer-events: auto;
+            transition: height 0.2s, box-shadow 0.2s;
+        }
+
+        .judgment-line.active {
+            height: 8px;
+            box-shadow: 0 0 30px rgba(255, 255, 255, 1), 0 0 15px rgba(245, 101, 101, 1);
         }
 
         .lanes {
@@ -378,7 +385,7 @@
             width: 70%;
             left: 15%;
             cursor: pointer;
-            transition: all 0.2s;
+            transition: transform 0.2s;
         }
 
         .note::before {
@@ -401,17 +408,24 @@
             background: linear-gradient(135deg, #667eea, #764ba2);
             box-shadow: 0 2px 8px rgba(102, 126, 234, 0.6);
             border-radius: 4px;
-
-            /* ▼ 追加: 親クラス(.note)の left: 15% をリセット */
             left: 0;
         }
 
-        .note.tap::before {
+        .note.extra {
+            width: 30px;
+            height: 30px;
+            margin-left: calc(50% - 15px);
+            transform: rotate(45deg);
+            background: linear-gradient(135deg, #ed8936, #f6ad55);
+            box-shadow: 0 2px 8px rgba(237, 137, 54, 0.6);
+            border-radius: 50%;
+            left: 0;
+        }
+
+        .note.tap::before, .note.extra::before {
             transform: rotate(-45deg);
             width: 142%;
-            /* 斜めの長さに合わせて幅を広げる */
             left: -21%;
-            /* 広げた分、中心を合わせる */
         }
 
         .note.hold {
@@ -428,6 +442,18 @@
             display: none;
         }
 
+        .hold-handle-top, .hold-handle-bottom {
+            position: absolute;
+            left: 0;
+            right: 0;
+            height: 12px;
+            cursor: ns-resize;
+            z-index: 20;
+            background: rgba(255, 255, 255, 0.2);
+        }
+        .hold-handle-top { top: -6px; }
+        .hold-handle-bottom { bottom: -6px; }
+
         .note.selected {
             box-shadow: 0 0 0 3px #ecc94b, 0 4px 12px rgba(102, 126, 234, 0.8);
         }
@@ -436,12 +462,17 @@
             transform: scale(1.1);
         }
 
-        .note.tap:hover {
+        .note.tap:hover, .note.extra:hover {
             transform: rotate(45deg) scale(1.15);
         }
 
         .note.hold:hover {
             transform: scale(1.02);
+        }
+
+        .note.placing {
+            opacity: 0.6;
+            pointer-events: none;
         }
 
         .selection-box {
@@ -478,10 +509,6 @@
             font-size: 12px;
             color: #4a5568;
             word-break: break-all;
-        }
-
-        .metronome-indicator {
-            display: none;
         }
     </style>
 </head>
@@ -537,6 +564,7 @@
                     <div class="note-type-selector">
                         <button class="note-type-btn active" data-type="tap">タップ</button>
                         <button class="note-type-btn" data-type="hold">ホールド</button>
+                        <button class="note-type-btn" data-type="extra">EX</button>
                     </div>
                 </div>
 
@@ -591,8 +619,9 @@
                     <strong>Ctrl+V (⌘+V):</strong> 貼り付け<br>
                     <strong>Ctrl+A (⌘+A):</strong> 全選択<br>
                     <strong>Delete/Backspace:</strong> 削除<br>
-                    <strong>クリック:</strong> ノーツ配置<br>
-                    <strong>Shift+ドラッグ:</strong> 範囲選択
+                    <strong>配置:</strong> ドラッグ(Hold) / クリック(Tap)<br>
+                    <strong>移動:</strong> 配置済みノーツをドラッグ<br>
+                    <strong>伸縮:</strong> ホールド端をドラッグ
                 </div>
             </div>
         </div>
@@ -650,9 +679,9 @@
         let bpm = 120;
         let timeSignature = '4/4';
         let offset = 0;
-        let holdStartNote = null;
         let scrollSpeed = 100;
         let isDraggingSeek = false;
+        let isDraggingJudgment = false;
         let animationFrameId = null;
         let autoScroll = true;
         let lastUserScrollTime = 0;
@@ -661,6 +690,17 @@
         let isDraggingSelection = false;
         let selectionStart = null;
         let copiedNotes = [];
+        
+        // 操作フラグ
+        let isPlacingHold = false;
+        let holdInitialTime = 0;
+        let currentPlacingHold = null;
+        
+        let isResizingHoldTop = false;
+        let isResizingHoldBottom = false;
+        let isDraggingNote = false;
+        let dragNoteIndex = -1;
+        let dragOffsetTime = 0;
 
         const playBtn = document.getElementById('playBtn');
         const timeDisplay = document.getElementById('timeDisplay');
@@ -675,14 +715,28 @@
         const measureDisplay = document.getElementById('measureDisplay');
         const measureContent = document.getElementById('measureContent');
 
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        let playedNoteIndices = new Set();
+
+        function playTapSound() {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+            gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.1);
+        }
+
         function init() {
             setupEventListeners();
             updateContentHeight();
             drawGridLines();
             drawMeasureLabels();
             updateTimeDisplay();
-
-            // エディタを最下部にスクロール
             setTimeout(() => {
                 editor.scrollTop = editor.scrollHeight;
                 measureDisplay.scrollTop = measureDisplay.scrollHeight;
@@ -699,10 +753,6 @@
                         updateContentHeight();
                         drawGridLines();
                         drawMeasureLabels();
-                        setTimeout(() => {
-                            editor.scrollTop = editor.scrollHeight;
-                            measureDisplay.scrollTop = measureDisplay.scrollHeight;
-                        }, 100);
                     }, { once: true });
                 }
             });
@@ -714,6 +764,7 @@
                 const rect = seekBar.getBoundingClientRect();
                 const percent = (e.clientX - rect.left) / rect.width;
                 audio.currentTime = percent * audio.duration;
+                playedNoteIndices.clear();
             });
 
             seekHandle.addEventListener('mousedown', (e) => {
@@ -721,20 +772,37 @@
                 e.preventDefault();
             });
 
+            judgmentLine.addEventListener('mousedown', (e) => {
+                isDraggingJudgment = true;
+                judgmentLine.classList.add('active');
+                e.preventDefault();
+            });
+
             document.addEventListener('mousemove', (e) => {
-                if (!isDraggingSeek) return;
-                const rect = seekBar.getBoundingClientRect();
-                let percent = (e.clientX - rect.left) / rect.width;
-                percent = Math.max(0, Math.min(1, percent));
-                audio.currentTime = percent * audio.duration;
+                if (isDraggingSeek) {
+                    const rect = seekBar.getBoundingClientRect();
+                    let percent = (e.clientX - rect.left) / rect.width;
+                    percent = Math.max(0, Math.min(1, percent));
+                    audio.currentTime = percent * audio.duration;
+                    playedNoteIndices.clear();
+                }
+                if (isDraggingJudgment) {
+                    const rect = lanes.getBoundingClientRect();
+                    const y = rect.bottom - e.clientY;
+                    const time = (y / (200 * (scrollSpeed / 100))) * ((60 / bpm) * 1000 * (getTimeSignatureInfo().numerator / (getTimeSignatureInfo().denominator / 4)));
+                    audio.currentTime = Math.max(0, (time - offset) / 1000);
+                    playedNoteIndices.clear();
+                }
             });
 
             document.addEventListener('mouseup', () => {
                 isDraggingSeek = false;
+                isDraggingJudgment = false;
+                judgmentLine.classList.remove('active');
             });
 
             document.getElementById('bpm').addEventListener('input', (e) => {
-                bpm = parseInt(e.target.value);
+                bpm = parseInt(e.target.value) || 120;
                 updateContentHeight();
                 drawGridLines();
                 drawMeasureLabels();
@@ -749,16 +817,11 @@
                 renderNotes();
             });
 
-            document.getElementById('offset').addEventListener('input', (e) => {
-                offset = parseInt(e.target.value);
-            });
-
             document.querySelectorAll('.note-type-btn').forEach(btn => {
                 btn.addEventListener('click', (e) => {
                     document.querySelectorAll('.note-type-btn').forEach(b => b.classList.remove('active'));
                     e.target.classList.add('active');
                     currentNoteType = e.target.dataset.type;
-                    holdStartNote = null;
                 });
             });
 
@@ -774,16 +837,10 @@
             document.getElementById('scrollSpeed').addEventListener('input', (e) => {
                 scrollSpeed = parseInt(e.target.value);
                 document.getElementById('scrollSpeedValue').textContent = scrollSpeed + '%';
-                const currentScrollPercent = editor.scrollTop / (editor.scrollHeight - editor.clientHeight);
                 updateContentHeight();
                 drawGridLines();
                 drawMeasureLabels();
                 renderNotes();
-                setTimeout(() => {
-                    const newScrollTop = currentScrollPercent * (editor.scrollHeight - editor.clientHeight);
-                    editor.scrollTop = newScrollTop;
-                    measureDisplay.scrollTop = newScrollTop;
-                }, 10);
             });
 
             autoScrollBtn.addEventListener('click', () => {
@@ -801,114 +858,28 @@
                 });
             });
 
-            let scrollTimeout;
             editor.addEventListener('scroll', () => {
                 measureDisplay.scrollTop = editor.scrollTop;
-                if (autoScroll && isPlaying) {
-                    lastUserScrollTime = Date.now();
-                    clearTimeout(scrollTimeout);
-                    scrollTimeout = setTimeout(() => {
-                        if (Date.now() - lastUserScrollTime > 2000) {
-                            lastUserScrollTime = 0;
-                        }
-                    }, 2000);
-                }
+                if (autoScroll && isPlaying) lastUserScrollTime = Date.now();
             });
-
-            editor.addEventListener('wheel', () => {
-                if (autoScroll && isPlaying) {
-                    lastUserScrollTime = Date.now();
-                }
-            }, { passive: true });
 
             document.querySelectorAll('.lane').forEach(lane => {
-                lane.addEventListener('click', handleLaneClick);
-                lane.addEventListener('contextmenu', handleLaneRightClick);
+                lane.addEventListener('mousedown', handleLaneMouseDown);
+                lane.addEventListener('contextmenu', (e) => e.preventDefault());
             });
 
-            function handleLaneClick(e) {
-                if (e.target.closest('.note')) return;
-
-                const lane = parseInt(e.currentTarget.dataset.lane);
-                const rect = lanes.getBoundingClientRect();
-                const y = rect.bottom - e.clientY;
-                const time = yToTime(y);
-
-                if (currentNoteType === 'tap') {
-                    addNote({ time, lane, type: 'tap' });
-                    selectedNotes.clear();
-                } else if (currentNoteType === 'hold') {
-                    if (!holdStartNote) {
-                        holdStartNote = { time, lane };
-                    } else {
-                        const duration = Math.abs(time - holdStartNote.time);
-                        if (duration > 0 && holdStartNote.lane === lane) {
-                            const startTime = Math.min(time, holdStartNote.time);
-                            addNote({
-                                time: startTime,
-                                lane: holdStartNote.lane,
-                                type: 'hold',
-                                duration
-                            });
-                        }
-                        holdStartNote = null;
-                        selectedNotes.clear();
-                    }
-                }
-            }
-
-            function handleLaneRightClick(e) {
-                e.preventDefault();
-                const noteEl = e.target.closest('.note');
-                if (noteEl) {
-                    const index = parseInt(noteEl.dataset.index);
-                    notes.splice(index, 1);
-                    selectedNotes.delete(index);
-                    renderNotes();
-                    updateNoteCount();
-                }
-            }
-
-            document.addEventListener('mousedown', handleGlobalMouseDown);
-            document.addEventListener('mousemove', handleMouseMove);
-            document.addEventListener('mouseup', handleMouseUp);
-
-            function handleGlobalMouseDown(e) {
-                const noteEl = e.target.closest('.note');
-                if (noteEl) {
-                    const index = parseInt(noteEl.dataset.index);
-                    if (e.shiftKey) {
-                        if (selectedNotes.has(index)) {
-                            selectedNotes.delete(index);
-                        } else {
-                            selectedNotes.add(index);
-                        }
-                    } else if (!selectedNotes.has(index)) {
-                        selectedNotes.clear();
-                        selectedNotes.add(index);
-                    }
-                    renderNotes();
-
-                    const note = notes[index];
-                    audio.currentTime = (note.time - offset) / 1000;
-                    return;
-                }
-
-                if (e.shiftKey && e.target.closest('.lane')) {
-                    isDraggingSelection = true;
-                    selectionStart = { x: e.clientX, y: e.clientY };
-                }
-            }
-
+            document.addEventListener('mousemove', handleGlobalMouseMove);
+            document.addEventListener('mouseup', handleGlobalMouseUp);
             document.addEventListener('keydown', handleKeyDown);
 
             document.getElementById('saveBtn').addEventListener('click', saveJSON);
             document.getElementById('loadFile').addEventListener('change', loadJSON);
 
             function updateLoop() {
-                if (!isDraggingSeek) {
+                if (!isDraggingSeek && !isDraggingJudgment) {
                     updateTimeDisplay();
                     updateJudgmentLine();
+                    checkNotesForSound();
                     if (autoScroll && isPlaying && Date.now() - lastUserScrollTime > 2000) {
                         updateEditorScroll();
                     }
@@ -918,22 +889,131 @@
             updateLoop();
         }
 
-        function handleLaneMouseDown(e) {
-            // この関数は削除されました
+        function isTimeInHold(time, lane, ignoreIndex = -1) {
+            return notes.some((n, idx) => {
+                if (idx === ignoreIndex) return false;
+                if (n.type === 'hold' && n.lane === lane) {
+                    return time > n.time && time < n.time + n.duration;
+                }
+                return false;
+            });
         }
 
-        function handleMouseMove(e) {
-            if (isDraggingSelection && selectionStart) {
+        function handleLaneMouseDown(e) {
+            if (e.button === 2) {
+                const noteEl = e.target.closest('.note');
+                if (noteEl) {
+                    const index = parseInt(noteEl.dataset.index);
+                    notes.splice(index, 1);
+                    selectedNotes.delete(index);
+                    renderNotes();
+                    updateNoteCount();
+                }
+                return;
+            }
+
+            const laneIdx = parseInt(e.currentTarget.dataset.lane);
+            const rect = lanes.getBoundingClientRect();
+            const y = rect.bottom - e.clientY;
+            const time = yToTime(y);
+
+            // 既存ノーツの操作判定
+            const noteEl = e.target.closest('.note');
+            if (noteEl) {
+                const index = parseInt(noteEl.dataset.index);
+                if (e.target.classList.contains('hold-handle-top')) {
+                    isResizingHoldTop = true;
+                    dragNoteIndex = index;
+                } else if (e.target.classList.contains('hold-handle-bottom')) {
+                    isResizingHoldBottom = true;
+                    dragNoteIndex = index;
+                } else {
+                    isDraggingNote = true;
+                    dragNoteIndex = index;
+                    dragOffsetTime = time - notes[index].time;
+                }
+                return;
+            }
+
+            if (isTimeInHold(time, laneIdx)) return;
+
+            if (currentNoteType === 'hold') {
+                isPlacingHold = true;
+                holdInitialTime = time;
+                currentPlacingHold = { time: time, lane: laneIdx, type: 'hold', duration: 0 };
+                renderNotes();
+            } else {
+                addNote({ time, lane: laneIdx, type: currentNoteType });
+            }
+        }
+
+        function handleGlobalMouseMove(e) {
+            const rect = lanes.getBoundingClientRect();
+            const y = rect.bottom - e.clientY;
+            const time = yToTime(y);
+
+            if (isPlacingHold && currentPlacingHold) {
+                const startTime = Math.min(holdInitialTime, time);
+                const endTime = Math.max(holdInitialTime, time);
+                currentPlacingHold.time = startTime;
+                currentPlacingHold.duration = endTime - startTime;
+                renderNotes();
+            } else if (isDraggingNote && dragNoteIndex !== -1) {
+                notes[dragNoteIndex].time = time - dragOffsetTime;
+                renderNotes();
+            } else if (isResizingHoldTop && dragNoteIndex !== -1) {
+                const note = notes[dragNoteIndex];
+                const newEndTime = time;
+                note.duration = Math.max(0, newEndTime - note.time);
+                renderNotes();
+            } else if (isResizingHoldBottom && dragNoteIndex !== -1) {
+                const note = notes[dragNoteIndex];
+                const oldEndTime = note.time + note.duration;
+                note.time = time;
+                note.duration = Math.max(0, oldEndTime - time);
+                renderNotes();
+            } else if (isDraggingSelection && selectionStart) {
                 updateSelectionBox(e);
             }
         }
 
-        function handleMouseUp(e) {
+        function handleGlobalMouseUp() {
+            if (isPlacingHold && currentPlacingHold) {
+                notes.push(currentPlacingHold);
+                isPlacingHold = false;
+                currentPlacingHold = null;
+            }
+            isDraggingNote = false;
+            isResizingHoldTop = false;
+            isResizingHoldBottom = false;
+            dragNoteIndex = -1;
+
             if (isDraggingSelection) {
-                finishSelection(e);
+                finishSelection();
                 isDraggingSelection = false;
                 selectionStart = null;
             }
+            renderNotes();
+            updateNoteCount();
+        }
+
+        function handleGlobalMouseDown(e) {
+            if (e.shiftKey && e.target.closest('.lane')) {
+                isDraggingSelection = true;
+                selectionStart = { x: e.clientX, y: e.clientY };
+            }
+        }
+        document.addEventListener('mousedown', handleGlobalMouseDown);
+
+        function checkNotesForSound() {
+            if (!isPlaying) return;
+            const currentTime = (audio.currentTime * 1000) + offset;
+            notes.forEach((note, index) => {
+                if (!playedNoteIndices.has(index) && currentTime >= note.time) {
+                    playTapSound();
+                    playedNoteIndices.add(index);
+                }
+            });
         }
 
         function updateSelectionBox(e) {
@@ -944,171 +1024,113 @@
                 box.className = 'selection-box';
                 editorContent.appendChild(box);
             }
-
             const x1 = Math.min(selectionStart.x, e.clientX);
             const y1 = Math.min(selectionStart.y, e.clientY);
             const x2 = Math.max(selectionStart.x, e.clientX);
             const y2 = Math.max(selectionStart.y, e.clientY);
-
-            const rect = editorContent.getBoundingClientRect();
-            box.style.left = (x1 - rect.left) + 'px';
-            box.style.top = (y1 - rect.top + editor.scrollTop) + 'px';
+            const r = editorContent.getBoundingClientRect();
+            box.style.left = (x1 - r.left) + 'px';
+            box.style.top = (y1 - r.top + editor.scrollTop) + 'px';
             box.style.width = (x2 - x1) + 'px';
             box.style.height = (y2 - y1) + 'px';
         }
 
-        function finishSelection(e) {
+        function finishSelection() {
             const box = document.getElementById('selectionBox');
             if (box) {
                 const boxRect = box.getBoundingClientRect();
                 const lanesRect = lanes.getBoundingClientRect();
-
                 notes.forEach((note, index) => {
                     const noteY = lanesRect.bottom - timeToY(note.time);
                     const laneWidth = lanesRect.width / 5;
                     const noteX = lanesRect.left + note.lane * laneWidth + laneWidth / 2;
-
                     if (noteX >= boxRect.left && noteX <= boxRect.right &&
                         noteY >= boxRect.top && noteY <= boxRect.bottom) {
                         selectedNotes.add(index);
                     }
                 });
-
                 box.remove();
-                renderNotes();
             }
         }
 
         function handleKeyDown(e) {
-            if (e.code === 'Space') {
-                e.preventDefault();
-                togglePlay();
-            } else if ((e.metaKey || e.ctrlKey) && e.code === 'KeyC') {
-                e.preventDefault();
-                copySelectedNotes();
-            } else if ((e.metaKey || e.ctrlKey) && e.code === 'KeyV') {
-                e.preventDefault();
-                pasteNotes();
-            } else if ((e.metaKey || e.ctrlKey) && e.code === 'KeyA') {
-                e.preventDefault();
-                selectAllNotes();
-            } else if (e.code === 'Delete' || e.code === 'Backspace') {
-                if (document.activeElement.tagName !== 'INPUT') {
-                    e.preventDefault();
-                    deleteSelectedNotes();
-                }
+            if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+            else if ((e.metaKey || e.ctrlKey) && e.code === 'KeyC') { e.preventDefault(); copySelectedNotes(); }
+            else if ((e.metaKey || e.ctrlKey) && e.code === 'KeyV') { e.preventDefault(); pasteNotes(); }
+            else if ((e.metaKey || e.ctrlKey) && e.code === 'KeyA') { e.preventDefault(); selectAllNotes(); }
+            else if (e.code === 'Delete' || e.code === 'Backspace') {
+                if (document.activeElement.tagName !== 'INPUT') { e.preventDefault(); deleteSelectedNotes(); }
             }
         }
 
         function copySelectedNotes() {
             if (selectedNotes.size === 0) return;
-
-            copiedNotes = Array.from(selectedNotes)
-                .map(index => ({ ...notes[index] }))
-                .sort((a, b) => a.time - b.time);
-
-            console.log(`${copiedNotes.length}個のノーツをコピーしました`);
+            copiedNotes = Array.from(selectedNotes).map(index => ({ ...notes[index] }));
         }
 
         function pasteNotes() {
             if (copiedNotes.length === 0) return;
-
             const currentTime = (audio.currentTime || 0) * 1000 + offset;
             const minTime = Math.min(...copiedNotes.map(n => n.time));
-            const timeOffset = currentTime - minTime;
-
-            selectedNotes.clear();
             copiedNotes.forEach(note => {
-                const newNote = {
-                    ...note,
-                    time: note.time + timeOffset
-                };
-                notes.push(newNote);
-                selectedNotes.add(notes.length - 1);
+                notes.push({ ...note, time: note.time + (currentTime - minTime) });
             });
-
             renderNotes();
-            updateNoteCount();
-            console.log(`${copiedNotes.length}個のノーツを貼り付けました`);
         }
 
         function selectAllNotes() {
             selectedNotes.clear();
-            notes.forEach((_, index) => selectedNotes.add(index));
+            notes.forEach((_, i) => selectedNotes.add(i));
             renderNotes();
         }
 
         function deleteSelectedNotes() {
-            if (selectedNotes.size === 0) return;
-
             const indices = Array.from(selectedNotes).sort((a, b) => b - a);
-            indices.forEach(index => notes.splice(index, 1));
+            indices.forEach(i => notes.splice(i, 1));
             selectedNotes.clear();
             renderNotes();
-            updateNoteCount();
         }
 
         function togglePlay() {
-            if (isPlaying) {
-                audio.pause();
-                playBtn.textContent = '▶';
-            } else {
-                audio.play();
-                playBtn.textContent = '⏸';
-            }
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            if (isPlaying) { audio.pause(); playBtn.textContent = '▶'; }
+            else { playedNoteIndices.clear(); audio.play(); playBtn.textContent = '⏸'; }
             isPlaying = !isPlaying;
         }
 
         function updateTimeDisplay() {
-            const current = formatTime(audio.currentTime || 0);
-            const duration = formatTime(audio.duration || 0);
-            timeDisplay.textContent = `${current} / ${duration}`;
-
-            const percent = (audio.currentTime / audio.duration) * 100 || 0;
+            const current = audio.currentTime || 0;
+            const duration = audio.duration || 0;
+            timeDisplay.textContent = `${formatTime(current)} / ${formatTime(duration)}`;
+            const percent = (current / duration) * 100 || 0;
             seekProgress.style.width = percent + '%';
             seekHandle.style.left = percent + '%';
         }
 
-        function formatTime(seconds) {
-            const mins = Math.floor(seconds / 60);
-            const secs = Math.floor(seconds % 60);
-            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        function formatTime(s) {
+            const m = Math.floor(s / 60);
+            return `${m}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
         }
 
         function updateEditorScroll() {
-            const currentTime = (audio.currentTime || 0) * 1000 + offset;
-            const targetY = timeToY(currentTime);
-            const viewportHeight = editor.clientHeight;
-            const scrollY = editorContent.offsetHeight - targetY - viewportHeight / 2;
-            editor.scrollTop = Math.max(0, Math.min(scrollY, editorContent.scrollHeight - viewportHeight));
+            const targetY = timeToY((audio.currentTime * 1000) + offset);
+            editor.scrollTop = editorContent.offsetHeight - targetY - (editor.clientHeight * 0.75);
         }
 
         function updateJudgmentLine() {
-            const currentTime = (audio.currentTime || 0) * 1000 + offset;
-            const y = timeToY(currentTime);
-            judgmentLine.style.bottom = y + 'px';
-        }
-
-        function updateMetronome() {
-            // メトロノーム機能は削除されました
+            judgmentLine.style.bottom = timeToY((audio.currentTime * 1000) + offset) + 'px';
         }
 
         function getTimeSignatureInfo() {
-            const [numerator, denominator] = timeSignature.split('/').map(Number);
-            return { numerator, denominator };
+            const [n, d] = timeSignature.split('/').map(Number);
+            return { numerator: n, denominator: d };
         }
 
         function updateContentHeight() {
-            const beatDuration = (60 / bpm) * 1000;
             const { numerator, denominator } = getTimeSignatureInfo();
-            const measureDuration = beatDuration * (numerator / (denominator / 4));
-            const baseMeasureHeight = 200;
-            const measureHeight = baseMeasureHeight * (scrollSpeed / 100);
-
-            const duration = (audio.duration || 60) * 1000;
-            const numMeasures = Math.ceil(duration / measureDuration) + 10;
-            const totalHeight = numMeasures * measureHeight;
-
+            const measureDuration = (60 / bpm) * 1000 * (numerator / (denominator / 4));
+            const measureHeight = 200 * (scrollSpeed / 100);
+            const totalHeight = Math.ceil(((audio.duration || 60) * 1000) / measureDuration + 10) * measureHeight;
             editorContent.style.height = totalHeight + 'px';
             measureContent.style.height = totalHeight + 'px';
             lanes.style.height = totalHeight + 'px';
@@ -1116,32 +1138,15 @@
 
         function drawGridLines() {
             document.querySelectorAll('.grid-line').forEach(el => el.remove());
-
-            const beatDuration = (60 / bpm) * 1000;
             const { numerator, denominator } = getTimeSignatureInfo();
-            const measureDuration = beatDuration * (numerator / (denominator / 4));
-            const baseMeasureHeight = 200;
-            const measureHeight = baseMeasureHeight * (scrollSpeed / 100);
-
-            // ▼▼▼ 修正箇所 ▼▼▼
-            // 拍子に合わせて1小節内のグリッド数を計算
-            const divisions = Math.round(numerator * (currentSnap / denominator));
-            // ▲▲▲ 修正箇所 ▲▲▲
-
-            const lineHeight = measureHeight / divisions;
-
-            const numMeasures = Math.ceil(editorContent.offsetHeight / measureHeight);
-
-            for (let measure = 0; measure < numMeasures; measure++) {
-                // divisions が 0 になる（極端な設定）のを防ぐ
-                if (divisions <= 0) continue;
-
-                for (let division = 0; division < divisions; division++) {
-                    const y = measure * measureHeight + division * lineHeight;
+            const mH = 200 * (scrollSpeed / 100);
+            const divs = Math.round(numerator * (currentSnap / denominator));
+            const numM = Math.ceil(editorContent.offsetHeight / mH);
+            for (let m = 0; m < numM; m++) {
+                for (let d = 0; d < divs; d++) {
                     const line = document.createElement('div');
-                    // 0番目（小節の頭）だけ濃い線にする
-                    line.className = 'grid-line' + (division === 0 ? ' measure' : '');
-                    line.style.bottom = y + 'px';
+                    line.className = 'grid-line' + (d === 0 ? ' measure' : '');
+                    line.style.bottom = (m * mH + d * (mH / divs)) + 'px';
                     editorContent.appendChild(line);
                 }
             }
@@ -1149,162 +1154,82 @@
 
         function drawMeasureLabels() {
             measureContent.innerHTML = '';
-
-            const beatDuration = (60 / bpm) * 1000;
-            const { numerator, denominator } = getTimeSignatureInfo();
-            const measureDuration = beatDuration * (numerator / (denominator / 4));
-            const baseMeasureHeight = 200;
-            const measureHeight = baseMeasureHeight * (scrollSpeed / 100);
-
-            const numMeasures = Math.ceil(editorContent.offsetHeight / measureHeight);
-
-            for (let measure = 0; measure < numMeasures; measure++) {
-                const y = measure * measureHeight;
+            const mH = 200 * (scrollSpeed / 100);
+            for (let m = 0; m < Math.ceil(editorContent.offsetHeight / mH); m++) {
                 const label = document.createElement('div');
                 label.className = 'measure-label';
-                label.textContent = measure.toString().padStart(3, '0');
-                label.style.bottom = y + 'px';
+                label.textContent = m.toString().padStart(3, '0');
+                label.style.bottom = (m * mH) + 'px';
                 measureContent.appendChild(label);
             }
         }
 
-        function timeToY(time) {
-            const beatDuration = (60 / bpm) * 1000;
+        function timeToY(t) {
             const { numerator, denominator } = getTimeSignatureInfo();
-            const measureDuration = beatDuration * (numerator / (denominator / 4));
-            const baseMeasureHeight = 200;
-            const measureHeight = baseMeasureHeight * (scrollSpeed / 100);
-            return (time / measureDuration) * measureHeight;
+            return (t / ((60 / bpm) * 1000 * (numerator / (denominator / 4)))) * (200 * (scrollSpeed / 100));
         }
 
         function yToTime(y) {
-            const beatDuration = (60 / bpm) * 1000;
             const { numerator, denominator } = getTimeSignatureInfo();
-            const measureDuration = beatDuration * (numerator / (denominator / 4));
-            const baseMeasureHeight = 200;
-            const measureHeight = baseMeasureHeight * (scrollSpeed / 100);
-            const time = (y / measureHeight) * measureDuration;
-
-            const snapDuration = beatDuration / (currentSnap / 4);
-            return Math.round(time / snapDuration) * snapDuration;
+            const t = (y / (200 * (scrollSpeed / 100))) * ((60 / bpm) * 1000 * (numerator / (denominator / 4)));
+            const snap = (60 / bpm) * 1000 / (currentSnap / 4);
+            return Math.round(t / snap) * snap;
         }
 
         function addNote(note) {
-            // 重複チェック：同じ時間・同じレーンにノーツが既に存在しないか確認
-            const isDuplicate = notes.some(existingNote =>
-                existingNote.time === note.time &&
-                existingNote.lane === note.lane
-            );
-
-            if (isDuplicate) {
-                console.log('同じ位置にノーツが既に存在します');
-                return;
+            if (!notes.some(n => n.time === note.time && n.lane === note.lane)) {
+                notes.push(note);
+                renderNotes();
+                updateNoteCount();
             }
-
-            notes.push(note);
-            renderNotes();
-            updateNoteCount();
         }
 
-        function updateNoteCount() {
-            document.getElementById('noteCount').textContent = notes.length;
+        function updateNoteCount() { document.getElementById('noteCount').textContent = notes.length; }
+
+        function createNoteElement(note, index, isPlacing = false) {
+            const el = document.createElement('div');
+            el.className = `note ${note.type} ${isPlacing ? 'placing' : ''} ${selectedNotes.has(index) ? 'selected' : ''}`;
+            if (index !== null) el.dataset.index = index;
+            const y = timeToY(note.time);
+            if (note.type === 'hold') {
+                el.style.bottom = y + 'px';
+                el.style.height = Math.max(8, timeToY(note.time + note.duration) - y) + 'px';
+                const t = document.createElement('div'); t.className = 'hold-handle-top'; el.appendChild(t);
+                const b = document.createElement('div'); b.className = 'hold-handle-bottom'; el.appendChild(b);
+            } else { el.style.bottom = (y - 15) + 'px'; }
+            return el;
         }
 
         function renderNotes() {
             document.querySelectorAll('.note').forEach(el => el.remove());
-
-            notes.forEach((note, index) => {
-                const lane = document.querySelector(`.lane[data-lane="${note.lane}"]`);
-                const noteEl = document.createElement('div');
-                noteEl.className = `note ${note.type}`;
-                noteEl.dataset.index = index;
-
-                if (selectedNotes.has(index)) {
-                    noteEl.classList.add('selected');
-                }
-
-                const y = timeToY(note.time);
-                noteEl.style.bottom = (y - 15) + 'px';
-
-                if (note.type === 'hold') {
-                    const height = timeToY(note.time + note.duration) - y;
-                    noteEl.style.height = height + 'px';
-                }
-
-                noteEl.addEventListener('contextmenu', (e) => {
-                    e.preventDefault();
-                    notes.splice(index, 1);
-                    selectedNotes.delete(index);
-                    renderNotes();
-                });
-
-                lane.appendChild(noteEl);
-            });
+            notes.forEach((n, i) => document.querySelector(`.lane[data-lane="${n.lane}"]`).appendChild(createNoteElement(n, i)));
+            if (isPlacingHold && currentPlacingHold) {
+                document.querySelector(`.lane[data-lane="${currentPlacingHold.lane}"]`).appendChild(createNoteElement(currentPlacingHold, null, true));
+            }
         }
 
         function saveJSON() {
             const data = {
-                metadata: {
-                    title: document.getElementById('title').value || '無題',
-                    bpm: bpm,
-                    offset: offset,
-                    timeSignature: timeSignature
-                },
-                notes: notes.sort((a, b) => a.time - b.time).map(note => ({
-                    time: note.time,
-                    lane: note.lane,
-                    type: note.type,
-                    ...(note.duration && { duration: note.duration })
-                }))
+                metadata: { title: document.getElementById('title').value, bpm, offset, timeSignature },
+                notes: notes.sort((a, b) => a.time - b.time)
             };
-
-            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
-            a.href = url;
-            a.download = `${data.metadata.title}.json`;
+            a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+            a.download = `${data.metadata.title || 'chart'}.json`;
             a.click();
-            URL.revokeObjectURL(url);
         }
 
         function loadJSON(e) {
-            const file = e.target.files[0];
-            if (!file) return;
-
-            const reader = new FileReader();
-            reader.onload = (event) => {
-                try {
-                    const data = JSON.parse(event.target.result);
-
-                    document.getElementById('title').value = data.metadata.title || '';
-                    document.getElementById('bpm').value = data.metadata.bpm || 120;
-                    document.getElementById('offset').value = data.metadata.offset || 0;
-
-                    bpm = data.metadata.bpm || 120;
-                    offset = data.metadata.offset || 0;
-                    timeSignature = data.metadata.timeSignature || '4/4';
-                    notes = data.notes || [];
-                    selectedNotes.clear();
-
-                    document.getElementById('timeSignature').value = timeSignature;
-
-                    updateContentHeight();
-                    drawGridLines();
-                    drawMeasureLabels();
-                    renderNotes();
-                    updateNoteCount();
-
-                    setTimeout(() => {
-                        editor.scrollTop = editor.scrollHeight;
-                        measureDisplay.scrollTop = measureDisplay.scrollHeight;
-                    }, 100);
-
-                    alert('譜面データを読み込みました！');
-                } catch (error) {
-                    alert('JSONファイルの読み込みに失敗しました。');
-                }
+            const f = e.target.files[0];
+            if (!f) return;
+            const r = new FileReader();
+            r.onload = (ev) => {
+                const d = JSON.parse(ev.target.result);
+                bpm = d.metadata.bpm; offset = d.metadata.offset; timeSignature = d.metadata.timeSignature;
+                notes = d.notes;
+                updateContentHeight(); drawGridLines(); drawMeasureLabels(); renderNotes(); updateNoteCount();
             };
-            reader.readAsText(file);
+            r.readAsText(f);
         }
 
         init();
