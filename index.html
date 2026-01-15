@@ -1248,8 +1248,22 @@
 
         function togglePlay() {
             if (audioCtx.state === 'suspended') audioCtx.resume();
-            if (isPlaying) { audio.pause(); playBtn.textContent = '▶'; }
-            else { playedNoteIndices.clear(); audio.play(); playBtn.textContent = '⏸'; }
+            if (isPlaying) { 
+                audio.pause(); 
+                playBtn.textContent = '▶'; 
+            }
+            else { 
+                playedNoteIndices.clear(); 
+                // 再生開始時点より前のノーツをすべて既読にする
+                const currentTime = (audio.currentTime * 1000) + offset;
+                notes.forEach((note, index) => {
+                    if (currentTime >= note.time) {
+                        playedNoteIndices.add(index);
+                    }
+                });
+                audio.play(); 
+                playBtn.textContent = '⏸'; 
+            }
             isPlaying = !isPlaying;
         }
 
