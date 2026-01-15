@@ -934,7 +934,7 @@
                     updateTimeDisplay();
                     updateJudgmentLine();
                     checkNotesForSound();
-                    if (autoScroll && isPlaying && Date.now() - lastUserScrollTime > 1500) {
+                    if (autoScroll && isPlaying && Date.now() - lastUserScrollTime > 10) {
                         updateEditorScroll();
                     }
                 }
@@ -1066,9 +1066,9 @@
             
             // 貼り付けプレビューの計算
             if (copiedNotes.length > 0 && !isDraggingSelection && !isPlaying) {
-                const rectEditor = editorContent.getBoundingClientRect();
-                const mouseY = rectEditor.bottom - e.clientY + editor.scrollTop;
-                const mouseTime = yToTime(mouseY);
+                const rectLanes = lanes.getBoundingClientRect();
+                const mouseYInLanes = rectLanes.bottom - e.clientY;
+                const mouseTime = yToTime(mouseYInLanes);
                 const baseSnap = (60 / bpm) * 1000 / (currentSnap / 4);
                 currentPasteTime = Math.round(mouseTime / baseSnap) * baseSnap;
                 renderPastePreview(currentPasteTime);
@@ -1148,7 +1148,8 @@
                 const previewNote = { ...note, time: note.time + (cursorTime - minTime) };
                 const el = createNoteElement(previewNote, null);
                 el.classList.add('paste-preview');
-                document.querySelector(`.lane[data-lane="${previewNote.lane}"]`).appendChild(el);
+                const laneEl = document.querySelector(`.lane[data-lane="${previewNote.lane}"]`);
+                if (laneEl) laneEl.appendChild(el);
             });
         }
 
@@ -1193,11 +1194,12 @@
             if (copiedNotes.length === 0) return;
             saveHistory();
             
-            // プレビュー位置がある場合はそれを使用、なければ再生ヘッド位置を使用
+            // プレビュー位置がある場合はそれを使用、なければ現在の再生位置をスナップさせて使用
             let targetTime = currentPasteTime;
+            const currentTime = (audio.currentTime * 1000) + offset;
+            const baseSnap = (60 / bpm) * 1000 / (currentSnap / 4);
+            
             if (targetTime === 0) {
-                const currentTime = (audio.currentTime * 1000) + offset;
-                const baseSnap = (60 / bpm) * 1000 / (currentSnap / 4);
                 targetTime = Math.round(currentTime / baseSnap) * baseSnap;
             }
             
@@ -1254,11 +1256,11 @@
             const targetY = timeToY(currentT);
             
             const viewHeight = editor.clientHeight;
-            // 判定線を画面の下から25%の位置に強力に固定
-            const linePositionFromBottom = viewHeight * 0.25;
+            // 判定線を画面の下から5%の位置に正確に固定
+            // スクロール位置 = (コンテンツ全体の高さ - 判定線のY座標) - (画面下から判定線までの距離)
+            const linePositionFromBottom = viewHeight * 0.01;
             const scrollPos = editorContent.offsetHeight - targetY - (viewHeight - linePositionFromBottom);
             
-            // 補間を使わず直接代入することで最強の追従を実現
             editor.scrollTop = scrollPos;
         }
 
