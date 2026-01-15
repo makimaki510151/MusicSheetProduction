@@ -729,6 +729,9 @@
         let dragNoteIndex = -1;
         let dragOffsetTime = 0;
 
+        // 保存フラグの追加
+        let isUnsaved = false;
+
         const playBtn = document.getElementById('playBtn');
         const timeDisplay = document.getElementById('timeDisplay');
         const seekBar = document.getElementById('seekBar');
@@ -748,6 +751,7 @@
         function saveHistory() {
             history.push(JSON.stringify(notes));
             if (history.length > MAX_HISTORY) history.shift();
+            isUnsaved = true; // 変更があったのでフラグを立てる
         }
 
         function undo() {
@@ -757,6 +761,7 @@
                 selectedNotes.clear();
                 renderNotes();
                 updateNoteCount();
+                isUnsaved = true;
             }
         }
 
@@ -783,6 +788,14 @@
                 editor.scrollTop = editor.scrollHeight;
                 measureDisplay.scrollTop = measureDisplay.scrollHeight;
             }, 100);
+
+            // リロード時の警告設定
+            window.addEventListener('beforeunload', (e) => {
+                if (isUnsaved && notes.length > 0) {
+                    e.preventDefault();
+                    e.returnValue = ''; // ブラウザ標準の警告を表示
+                }
+            });
         }
 
         function setupEventListeners() {
@@ -1080,6 +1093,7 @@
                 notes.push(currentPlacingHold);
                 isPlacingHold = false;
                 currentPlacingHold = null;
+                isUnsaved = true;
             }
             isDraggingNote = false;
             isResizingHoldTop = false;
@@ -1214,6 +1228,7 @@
             });
             renderNotes();
             updateNoteCount();
+            isUnsaved = true;
         }
 
         function selectAllNotes() {
@@ -1228,6 +1243,7 @@
             selectedNotes.clear();
             renderNotes();
             updateNoteCount();
+            isUnsaved = true;
         }
 
         function togglePlay() {
@@ -1332,6 +1348,7 @@
                 notes.push(note);
                 renderNotes();
                 updateNoteCount();
+                isUnsaved = true;
             }
         }
 
@@ -1372,6 +1389,7 @@
             a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
             a.download = `${data.metadata.title || 'chart'}.json`;
             a.click();
+            isUnsaved = false; // 保存したのでフラグを降ろす
         }
 
         function loadJSON(e) {
@@ -1383,6 +1401,7 @@
                 bpm = d.metadata.bpm; offset = d.metadata.offset; timeSignature = d.metadata.timeSignature;
                 notes = d.notes;
                 updateContentHeight(); drawGridLines(); drawMeasureLabels(); renderNotes(); updateNoteCount();
+                isUnsaved = false; // 読み込み直後は未変更状態
             };
             r.readAsText(f);
         }
