@@ -228,6 +228,7 @@
             background: #667eea;
             border-radius: 4px;
             pointer-events: none;
+            transition: width 0.1s ease-out;
         }
 
         .seek-handle {
@@ -241,7 +242,12 @@
             border-radius: 50%;
             cursor: grab;
             box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-            transition: transform 0.1s;
+            transition: left 0.1s ease-out;
+        }
+
+        .seek-bar.no-transition .seek-progress,
+        .seek-bar.no-transition .seek-handle {
+            transition: none !important;
         }
 
         .seek-handle:active {
@@ -344,7 +350,11 @@
             box-shadow: 0 0 20px rgba(245, 101, 101, 0.8);
             cursor: ns-resize;
             pointer-events: auto;
-            transition: height 0.2s, box-shadow 0.2s;
+            transition: bottom 0.1s ease-out, height 0.2s, box-shadow 0.2s;
+        }
+
+        .judgment-line.no-transition {
+            transition: height 0.2s, box-shadow 0.2s !important;
         }
 
         .judgment-line.active {
@@ -635,6 +645,8 @@
                 <h3>⌨️ ショートカット</h3>
                 <div style="font-size: 12px; color: #555; line-height: 1.6;">
                     <strong>Space:</strong> 再生/停止<br>
+                    <strong>Enter:</strong> カーソル位置にノーツ配置<br>
+                    <strong>← / →:</strong> 再生バー移動 (Ctrlで1拍)<br>
                     <strong>Ctrl+Z:</strong> 元に戻す<br>
                     <strong>Ctrl+C (⌘+C):</strong> コピー<br>
                     <strong>Ctrl+V (⌘+V):</strong> 貼り付け<br>
@@ -714,7 +726,8 @@
         let selectionStart = null;
         let copiedNotes = [];
         let seVolume = 0.3;
-        let currentPasteTime = 0; // 貼り付け予想位置保存用
+        let currentPasteTime = 0;
+        let mousePosition = { x: 0, y: 0 };
 
         let history = [];
         const MAX_HISTORY = 50;
@@ -729,7 +742,6 @@
         let dragNoteIndex = -1;
         let dragOffsetTime = 0;
 
-        // 保存フラグの追加
         let isUnsaved = false;
 
         const playBtn = document.getElementById('playBtn');
@@ -751,7 +763,7 @@
         function saveHistory() {
             history.push(JSON.stringify(notes));
             if (history.length > MAX_HISTORY) history.shift();
-            isUnsaved = true; // 変更があったのでフラグを立てる
+            isUnsaved = true;
         }
 
         function undo() {
@@ -789,11 +801,21 @@
                 measureDisplay.scrollTop = measureDisplay.scrollHeight;
             }, 100);
 
-            // リロード時の警告設定
             window.addEventListener('beforeunload', (e) => {
                 if (isUnsaved && notes.length > 0) {
                     e.preventDefault();
-                    e.returnValue = ''; // ブラウザ標準の警告を表示
+                    e.returnValue = '';
+                }
+            });
+        }
+
+        function skipPlayedNotes() {
+            const currentTime = (audio.currentTime * 1000) + offset;
+            notes.forEach((note, index) => {
+                if (currentTime >= note.time) {
+                    playedNoteIndices.add(index);
+                } else {
+                    playedNoteIndices.delete(index);
                 }
             });
         }
@@ -831,41 +853,47 @@
                 const rect = seekBar.getBoundingClientRect();
                 const percent = (e.clientX - rect.left) / rect.width;
                 audio.currentTime = percent * audio.duration;
-                playedNoteIndices.clear();
+                skipPlayedNotes();
             });
 
             seekHandle.addEventListener('mousedown', (e) => {
                 isDraggingSeek = true;
+                seekBar.classList.add('no-transition');
                 e.preventDefault();
             });
 
             judgmentLine.addEventListener('mousedown', (e) => {
                 isDraggingJudgment = true;
                 judgmentLine.classList.add('active');
+                judgmentLine.classList.add('no-transition');
                 e.preventDefault();
             });
 
             document.addEventListener('mousemove', (e) => {
+                mousePosition.x = e.clientX;
+                mousePosition.y = e.clientY;
                 if (isDraggingSeek) {
                     const rect = seekBar.getBoundingClientRect();
                     let percent = (e.clientX - rect.left) / rect.width;
                     percent = Math.max(0, Math.min(1, percent));
                     audio.currentTime = percent * audio.duration;
-                    playedNoteIndices.clear();
+                    skipPlayedNotes();
                 }
                 if (isDraggingJudgment) {
                     const rect = lanes.getBoundingClientRect();
                     const y = rect.bottom - e.clientY;
                     const time = (y / (200 * (scrollSpeed / 100))) * ((60 / bpm) * 1000 * (getTimeSignatureInfo().numerator / (getTimeSignatureInfo().denominator / 4)));
                     audio.currentTime = Math.max(0, (time - offset) / 1000);
-                    playedNoteIndices.clear();
+                    skipPlayedNotes();
                 }
             });
 
             document.addEventListener('mouseup', () => {
                 isDraggingSeek = false;
                 isDraggingJudgment = false;
+                seekBar.classList.remove('no-transition');
                 judgmentLine.classList.remove('active');
+                judgmentLine.classList.remove('no-transition');
             });
 
             document.getElementById('bpm').addEventListener('input', (e) => {
@@ -884,11 +912,11 @@
                 renderNotes();
             });
 
-            // オフセット入力の変更
             document.getElementById('offset').addEventListener('input', (e) => {
                 offset = parseInt(e.target.value) || 0;
                 updateJudgmentLine();
                 renderNotes();
+                skipPlayedNotes();
             });
 
             document.querySelectorAll('.note-type-btn').forEach(btn => {
@@ -950,6 +978,14 @@
             document.getElementById('loadFile').addEventListener('change', loadJSON);
 
             function updateLoop() {
+                if (isPlaying || isDraggingSeek || isDraggingJudgment) {
+                    seekBar.classList.add('no-transition');
+                    judgmentLine.classList.add('no-transition');
+                } else {
+                    seekBar.classList.remove('no-transition');
+                    judgmentLine.classList.remove('no-transition');
+                }
+
                 if (!isDraggingSeek && !isDraggingJudgment) {
                     updateTimeDisplay();
                     updateJudgmentLine();
@@ -1084,7 +1120,6 @@
                 updateSelectionBox(e);
             }
             
-            // 貼り付けプレビューの計算
             if (copiedNotes.length > 0 && !isDraggingSelection && !isPlaying) {
                 const rectLanes = lanes.getBoundingClientRect();
                 const mouseYInLanes = rectLanes.bottom - e.clientY;
@@ -1187,6 +1222,18 @@
 
         function handleKeyDown(e) {
             if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+            else if (e.code === 'Enter') {
+                e.preventDefault();
+                placeNoteAtCursor();
+            }
+            else if (e.code === 'ArrowLeft') {
+                e.preventDefault();
+                moveSeek(-1, e.metaKey || e.ctrlKey);
+            }
+            else if (e.code === 'ArrowRight') {
+                e.preventDefault();
+                moveSeek(1, e.metaKey || e.ctrlKey);
+            }
             else if (e.code === 'Escape') { 
                 selectedNotes.clear(); 
                 copiedNotes = []; 
@@ -1206,6 +1253,39 @@
             }
         }
 
+        function placeNoteAtCursor() {
+            const rect = lanes.getBoundingClientRect();
+            if (mousePosition.x < rect.left || mousePosition.x > rect.right ||
+                mousePosition.y < rect.top || mousePosition.y > rect.bottom) {
+                return;
+            }
+
+            const laneWidth = rect.width / 5;
+            const laneIdx = Math.floor((mousePosition.x - rect.left) / laneWidth);
+            const y = rect.bottom - mousePosition.y;
+            const time = yToTime(y);
+
+            if (isTimeInHold(time, laneIdx)) return;
+
+            saveHistory();
+            if (currentNoteType === 'hold') {
+                isPlacingHold = true;
+                holdInitialTime = time;
+                currentPlacingHold = { time: time, lane: laneIdx, type: 'hold', duration: 0 };
+                renderNotes();
+            } else {
+                addNote({ time, lane: laneIdx, type: currentNoteType });
+            }
+        }
+
+        function moveSeek(direction, isLarge) {
+            const beatMs = (60 / bpm) * 1000;
+            const stepMs = isLarge ? beatMs : beatMs / (currentSnap / 4);
+            const newTime = Math.max(0, audio.currentTime + (direction * stepMs / 1000));
+            audio.currentTime = newTime;
+            skipPlayedNotes();
+        }
+
         function copySelectedNotes() {
             if (selectedNotes.size === 0) return;
             copiedNotes = Array.from(selectedNotes).map(index => ({ ...notes[index] }));
@@ -1215,7 +1295,6 @@
             if (copiedNotes.length === 0) return;
             saveHistory();
             
-            // プレビュー位置がある場合はそれを使用、なければ現在の再生位置をスナップさせて使用
             let targetTime = currentPasteTime;
             const currentTime = (audio.currentTime * 1000) + offset;
             const baseSnap = (60 / bpm) * 1000 / (currentSnap / 4);
@@ -1260,14 +1339,7 @@
                 playBtn.textContent = '▶'; 
             }
             else { 
-                playedNoteIndices.clear(); 
-                // 再生開始時点より前のノーツをすべて既読にする
-                const currentTime = (audio.currentTime * 1000) + offset;
-                notes.forEach((note, index) => {
-                    if (currentTime >= note.time) {
-                        playedNoteIndices.add(index);
-                    }
-                });
+                skipPlayedNotes();
                 audio.play(); 
                 playBtn.textContent = '⏸'; 
             }
