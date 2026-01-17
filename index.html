@@ -884,6 +884,13 @@
                 renderNotes();
             });
 
+            // オフセット入力の変更
+            document.getElementById('offset').addEventListener('input', (e) => {
+                offset = parseInt(e.target.value) || 0;
+                updateJudgmentLine();
+                renderNotes();
+            });
+
             document.querySelectorAll('.note-type-btn').forEach(btn => {
                 btn.addEventListener('click', (e) => {
                     document.querySelectorAll('.note-type-btn').forEach(b => b.classList.remove('active'));
@@ -1286,8 +1293,6 @@
             const targetY = timeToY(currentT);
             
             const viewHeight = editor.clientHeight;
-            // 判定線を画面の下から5%の位置に正確に固定
-            // スクロール位置 = (コンテンツ全体の高さ - 判定線のY座標) - (画面下から判定線までの距離)
             const linePositionFromBottom = viewHeight * 0.01;
             const scrollPos = editorContent.offsetHeight - targetY - (viewHeight - linePositionFromBottom);
             
@@ -1403,7 +1408,7 @@
             a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
             a.download = `${data.metadata.title || 'chart'}.json`;
             a.click();
-            isUnsaved = false; // 保存したのでフラグを降ろす
+            isUnsaved = false;
         }
 
         function loadJSON(e) {
@@ -1412,10 +1417,16 @@
             const r = new FileReader();
             r.onload = (ev) => {
                 const d = JSON.parse(ev.target.result);
-                bpm = d.metadata.bpm; offset = d.metadata.offset; timeSignature = d.metadata.timeSignature;
+                bpm = d.metadata.bpm; 
+                offset = d.metadata.offset || 0; 
+                timeSignature = d.metadata.timeSignature;
                 notes = d.notes;
+                document.getElementById('bpm').value = bpm;
+                document.getElementById('offset').value = offset;
+                document.getElementById('timeSignature').value = timeSignature;
+                document.getElementById('title').value = d.metadata.title || "";
                 updateContentHeight(); drawGridLines(); drawMeasureLabels(); renderNotes(); updateNoteCount();
-                isUnsaved = false; // 読み込み直後は未変更状態
+                isUnsaved = false;
             };
             r.readAsText(f);
         }
